@@ -1,0 +1,22 @@
+artslam_localizer:
+    ros__parameters:
+        # topic where the IMU data is read from
+        imu_topic: "/imu/data"
+        # topic where the pointclouds are read from
+        pointcloud_topic: "/ouster/points"
+        # topic where the estimate of the pose is pulished onto
+        odom_topic: "/state_estimation"
+        # frame where the robot is localized 
+        global_frame: "map"
+        # frame of the robot
+        base_frame: "base_link"
+        # frame in which the localizer performs the localization
+        sensor_frame: "os_sensor"
+        # whether to use IMU
+        use_imu: False
+        # whether to use Encoders
+        use_encoders: True
+        # whether to use GPS
+        use_gnss: False
+        # whether to use Point Clouds (at least one is required)
+        use_point_clouds: True
