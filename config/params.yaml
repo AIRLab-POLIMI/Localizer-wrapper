@@ -4,7 +4,7 @@ artslam_localizer:
         imu_topic: "/imu/data"
         # topic where the pointclouds are read from
         pointcloud_topic: "/ouster/points"
-        # topic where the estimate of the pose is pulished onto
+        # topic where the estimate of the pose is published onto
         odom_topic: "/state_estimation"
         # frame where the robot is localized 
         global_frame: "map"
@@ -15,7 +15,7 @@ artslam_localizer:
         # whether to use IMU
         use_imu: False
         # whether to use Encoders
-        use_encoders: True
+        use_encoders: False
         # whether to use GPS
         use_gnss: False
         # whether to use Point Clouds (at least one is required)
