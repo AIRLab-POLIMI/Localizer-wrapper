@@ -17,6 +17,8 @@ artslam_localizer:
         # whether to use Encoders
         use_encoders: False
         # whether to use GPS
-        use_gnss: False
+        use_gnss: True
         # whether to use Point Clouds (at least one is required)
         use_point_clouds: True
+        # use sim time
+        use_sim_time: true

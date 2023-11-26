@@ -1,4 +1,7 @@
-lt_num_threads: 4
+loc_fitness_threshold: 50.0
+loc_mode: 3
+loc_s2m_threshold: 20
+lt_num_threads: 0
 lt_epsilon: 1e-1
 lt_iterations: 64
 lt_corr_distance: 3
@@ -8,7 +11,7 @@ lt_min_height: -0.65
 lt_leaf_x: 0.5
 lt_leaf_y: 0.5
 lt_leaf_z: 0.2
-lc_num_threads: 4
+lc_num_threads: 0
 lc_epsilon: 1e-2
 lc_iterations: 128
 lc_corr_distance: 10

@@ -57,25 +57,31 @@ ArtslamLocalizer::ArtslamLocalizer()
     std::cout << std::boolalpha << "[LOCALIZER INIT] Using Point clouds: " << use_point_clouds_ << std::endl;
     std::cout << std::noboolalpha;
 
-    imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
-        imu_topic_,
-        rclcpp::QoS(rclcpp::SensorDataQoS()),
-        std::bind(&ArtslamLocalizer::imu_callback, this, _1));
+    if(use_imu_) {
+        imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
+                imu_topic_,
+                rclcpp::QoS(rclcpp::SensorDataQoS()),
+                std::bind(&ArtslamLocalizer::imu_callback, this, _1));
+    }
 
     pointcloud_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
         pointcloud_topic_,
         rclcpp::QoS(rclcpp::SensorDataQoS()),
         std::bind(&ArtslamLocalizer::pointcloud_callback, this, _1));
 
-    odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-            "/odom",
-            rclcpp::QoS(rclcpp::SensorDataQoS()),
-            std::bind(&ArtslamLocalizer::odom_callback, this, _1));
+    if(use_encoders_) {
+        odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+                "/odom",
+                rclcpp::QoS(rclcpp::SensorDataQoS()),
+                std::bind(&ArtslamLocalizer::odom_callback, this, _1));
+    }
 
-    gnss_sub_ = this->create_subscription<sensor_msgs::msg::NavSatFix>(
-            "/fix",
-            rclcpp::QoS(rclcpp::SensorDataQoS()),
-            std::bind(&ArtslamLocalizer::gnss_callback, this, _1));
+    if(use_gnss_) {
+        gnss_sub_ = this->create_subscription<sensor_msgs::msg::NavSatFix>(
+                "/fix",
+                rclcpp::QoS(rclcpp::SensorDataQoS()),
+                std::bind(&ArtslamLocalizer::gnss_callback, this, _1));
+    }
 
     pose2_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/corrected_pose", 10);
     odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(odom_topic_, 10);
@@ -97,7 +103,7 @@ ArtslamLocalizer::ArtslamLocalizer()
 
 void ArtslamLocalizer::imu_callback(const sensor_msgs::msg::Imu& msg) {
     // 1. If IMU data usage is disabled, immediately return
-    if(!use_imu_) return;
+    //if(!use_imu_) return;
 
     // 2. Otherwise, create a new IMU custom message and convert from Imu
     IMU_MSG::Ptr imu_msg_ = std::make_shared<IMU_MSG>();
@@ -139,6 +145,8 @@ void ArtslamLocalizer::imu_callback(const sensor_msgs::msg::Imu& msg) {
                        pred_msg->value_(2, 2)).getRotation(q);
 
         tf2::convert(q, map_sensor_tf.transform.rotation);
+
+        std::lock_guard<std::mutex> lock(saving_mutex_);
         tf_broadcaster_->sendTransform(map_sensor_tf);
 
         // Only for visualization
@@ -151,7 +159,7 @@ void ArtslamLocalizer::imu_callback(const sensor_msgs::msg::Imu& msg) {
 // Subscribe to the active odom topic
 void ArtslamLocalizer::odom_callback(const nav_msgs::msg::Odometry &msg) {
     // 1. If the odometry from Encoders is disabled, immediately return
-    if(!use_encoders_) return;
+    //if(!use_encoders_) return;
 
     // 2. Otherwise, create a new Odometry custom message and convert from Odometry
     Odometry_MSG::Ptr odom = std::make_shared<Odometry_MSG>();
@@ -215,6 +223,8 @@ void ArtslamLocalizer::odom_callback(const nav_msgs::msg::Odometry &msg) {
                            pred_msg->value_(2, 2)).getRotation(q);
 
             tf2::convert(q, map_sensor_tf.transform.rotation);
+
+            std::lock_guard<std::mutex> lock(saving_mutex_);
             tf_broadcaster_->sendTransform(map_sensor_tf);
 
             // Only for visualization
@@ -226,7 +236,7 @@ void ArtslamLocalizer::odom_callback(const nav_msgs::msg::Odometry &msg) {
 
 void ArtslamLocalizer::gnss_callback(const sensor_msgs::msg::NavSatFix &msg) {
     // 1. If the GNSS is disabled, immediately return
-    if(!use_gnss_) return;
+    //if(!use_gnss_) return;
 
     // 2. Otherwise, create a new GNSS custom message and convert from NavSatFix
     GNSS_MSG::Ptr _gnss_msg = std::make_shared<GNSS_MSG>();
@@ -284,6 +294,8 @@ void ArtslamLocalizer::gnss_callback(const sensor_msgs::msg::NavSatFix &msg) {
                            pred_msg->value_(2, 2)).getRotation(q);
 
             tf2::convert(q, map_sensor_tf.transform.rotation);
+
+            std::lock_guard<std::mutex> lock(saving_mutex_);
             tf_broadcaster_->sendTransform(map_sensor_tf);
 
             // Only for visualization
@@ -295,6 +307,7 @@ void ArtslamLocalizer::gnss_callback(const sensor_msgs::msg::NavSatFix &msg) {
 
 void ArtslamLocalizer::pointcloud_callback(const sensor_msgs::msg::PointCloud2& msg)
 {
+    auto start = std::chrono::high_resolution_clock::now();
     // 1. If the use of point clouds is disabled, immediately return, but only after global localization
     // TODO in localizer, make it so that GPS can be used instead
     if(!use_point_clouds_)
@@ -333,12 +346,21 @@ void ArtslamLocalizer::pointcloud_callback(const sensor_msgs::msg::PointCloud2& 
                        pred_msg->value_(2, 1),
                        pred_msg->value_(2, 2)).getRotation(q);
         tf2::convert(q, map_sensor_tf.transform.rotation);
+
+        std::lock_guard<std::mutex> lock(saving_mutex_);
         tf_broadcaster_->sendTransform(map_sensor_tf);
 
         // Only for visualization
         corrected_x_ = map_sensor_tf.transform.translation.x;
         corrected_y_ = map_sensor_tf.transform.translation.y;
     }
+
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
+    loc_time_ += duration.count();
+    loc_count_++;
+
+    std::cout << "[WRAPPER TIME] TT C ID: " << loc_time_ << ", " << loc_count_ << " - " << (pointcloud_msg_seq_-1) << ", avg. " << loc_time_/loc_count_ << "\n";
 }
 
 // publish the estimate of the robot's pose
@@ -348,16 +370,17 @@ void ArtslamLocalizer::odom_timer_callback() {
     odom_msg.header.frame_id = global_frame_;
     odom_msg.child_frame_id = base_frame_;
 
+    nav_msgs::msg::Odometry odom2_msg;
+    odom2_msg.header.stamp = this->get_clock()->now();
+    odom2_msg.header.frame_id = global_frame_;
+    odom2_msg.child_frame_id = base_frame_;
+
+    std::lock_guard<std::mutex> lock(saving_mutex_);
     // TODO be sure that in imu_callback() the predicted x and y will be changed into the position of base_link, not of os_sensor
     odom_msg.pose.pose.position.x = predicted_x_;
     odom_msg.pose.pose.position.y = predicted_y_;
 
     odom_pub_->publish(odom_msg);
-
-    nav_msgs::msg::Odometry odom2_msg;
-    odom2_msg.header.stamp = this->get_clock()->now();
-    odom2_msg.header.frame_id = global_frame_;
-    odom2_msg.child_frame_id = base_frame_;
 
     // TODO be sure that in imu_callback() the predicted x and y will be changed into the position of base_link, not of os_sensor
     odom2_msg.pose.pose.position.x = corrected_x_;
@@ -365,9 +388,6 @@ void ArtslamLocalizer::odom_timer_callback() {
 
     odom_c_pub_->publish(odom2_msg);
 }
-
-
-
 
 // TODO split the class and the main function
 
