@@ -43,6 +43,9 @@ private:
     double corrected_x_ = 0.0;
     double corrected_y_ = 0.0;
 
+    double loc_time_ = 0.0;
+    double loc_count_ = 0.0;
+
     Odometry_MSG::Ptr first_odom = nullptr;
 
     tf2::Transform sensor_to_base_tf_;
@@ -62,6 +65,8 @@ private:
     std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
     rclcpp::TimerBase::SharedPtr odom_timer_;
 
+    std::mutex saving_mutex_;
+
     void imu_callback(const sensor_msgs::msg::Imu& msg);
     void pointcloud_callback(const sensor_msgs::msg::PointCloud2& msg);
     void odom_callback(const nav_msgs::msg::Odometry& msg);
@@ -69,7 +74,6 @@ private:
     void odom_timer_callback();
     void state_timer_callback();
     void check_sensor_transform();
-
 };
 
 #endif /* ARTSLAM_LOCALIZER_HPP */
