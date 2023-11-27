@@ -7,6 +7,7 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include <lots_utils/types_converter.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
 
 using namespace lots::localization;
 using namespace lots::core::utils;
@@ -84,6 +85,7 @@ ArtslamLocalizer::ArtslamLocalizer()
     }
 
     pose2_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/corrected_pose", 10);
+    scan_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("registered_scan", 5);
     odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(odom_topic_, 10);
     odom_p_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("/od_p", 10);
     odom_c_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("/od_c", 10);
@@ -98,7 +100,25 @@ ArtslamLocalizer::ArtslamLocalizer()
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     odom_timer_ = this->create_wall_timer(20ms, std::bind(&ArtslamLocalizer::odom_timer_callback, this));
+}
 
+void ArtslamLocalizer::check_sensor_transform() {
+    if(!base_tf_ready_) {
+        geometry_msgs::msg::TransformStamped base_to_sensor_msg;
+        try {
+            base_to_sensor_msg = tf_buffer_->lookupTransform(base_frame_, sensor_frame_, tf2::TimePointZero);
+        } catch (tf2::TransformException &ex) {
+            RCLCPP_WARN(this->get_logger(), "%s", ex.what());
+            return;
+        }
+
+        // compute the inverse of base_link->os_sensor
+        tf2::Transform base_to_sensor_tf;
+        tf2::fromMsg(base_to_sensor_msg.transform, base_to_sensor_tf);
+        sensor_to_base_tf_ = base_to_sensor_tf.inverse();
+
+        base_tf_ready_ = true;
+    }
 }
 
 void ArtslamLocalizer::imu_callback(const sensor_msgs::msg::Imu& msg) {
@@ -123,15 +143,15 @@ void ArtslamLocalizer::imu_callback(const sensor_msgs::msg::Imu& msg) {
     Odometry_MSG::Ptr pred_msg = localizer_.predict(imu_msg_);
 
     if (pred_msg) {
-        geometry_msgs::msg::TransformStamped map_sensor_tf;
+        geometry_msgs::msg::TransformStamped map_to_sensor_msg;
 
-        map_sensor_tf.header.stamp = msg.header.stamp;
-        map_sensor_tf.header.frame_id = global_frame_;
-        map_sensor_tf.child_frame_id = "os_sensor_tmp"; // TODO use sensor_frame_ (parameter) instead
+        map_to_sensor_msg.header.stamp = msg.header.stamp;
+        map_to_sensor_msg.header.frame_id = global_frame_;
+        map_to_sensor_msg.child_frame_id = sensor_frame_; // TODO use sensor_frame_ (parameter) instead
 
-        map_sensor_tf.transform.translation.x = pred_msg->value_(0, 3);
-        map_sensor_tf.transform.translation.y = pred_msg->value_(1, 3);
-        map_sensor_tf.transform.translation.z = pred_msg->value_(2, 3);
+        map_to_sensor_msg.transform.translation.x = pred_msg->value_(0, 3);
+        map_to_sensor_msg.transform.translation.y = pred_msg->value_(1, 3);
+        map_to_sensor_msg.transform.translation.z = pred_msg->value_(2, 3);
 
         tf2::Quaternion q;
         tf2::Matrix3x3(pred_msg->value_(0, 0),
@@ -144,14 +164,28 @@ void ArtslamLocalizer::imu_callback(const sensor_msgs::msg::Imu& msg) {
                        pred_msg->value_(2, 1),
                        pred_msg->value_(2, 2)).getRotation(q);
 
-        tf2::convert(q, map_sensor_tf.transform.rotation);
+        tf2::convert(q, map_to_sensor_msg.transform.rotation);
+
+        check_sensor_transform();
+
+        // compute the dynamic map->base_link transform
+        tf2::Transform map_to_sensor_tf;
+        tf2::fromMsg(map_to_sensor_msg.transform, map_to_sensor_tf);
+        tf2::Transform map_to_base_tf = map_to_sensor_tf * sensor_to_base_tf_;
+
+        // broadcast the dynamic map->base_link transform
+        geometry_msgs::msg::TransformStamped map_to_base_msg;
+        map_to_base_msg.header.stamp = msg.header.stamp;
+        map_to_base_msg.header.frame_id = global_frame_;
+        map_to_base_msg.child_frame_id = base_frame_;
+        map_to_base_msg.transform = tf2::toMsg(map_to_base_tf);
 
         std::lock_guard<std::mutex> lock(saving_mutex_);
-        tf_broadcaster_->sendTransform(map_sensor_tf);
+        tf_broadcaster_->sendTransform(map_to_base_msg);
 
         // Only for visualization
-        predicted_x_ = map_sensor_tf.transform.translation.x;
-        predicted_y_ = map_sensor_tf.transform.translation.y;
+        predicted_x_ = map_to_base_msg.transform.translation.x;
+        predicted_y_ = map_to_base_msg.transform.translation.y;
     }
 
 }
@@ -201,15 +235,15 @@ void ArtslamLocalizer::odom_callback(const nav_msgs::msg::Odometry &msg) {
     if(!use_imu_) {
         if (pred_msg) {
             // Send a tf to represent the motion of the robot
-            geometry_msgs::msg::TransformStamped map_sensor_tf;
+            geometry_msgs::msg::TransformStamped map_to_sensor_msg;
 
-            map_sensor_tf.header.stamp = msg.header.stamp;
-            map_sensor_tf.header.frame_id = global_frame_;
-            map_sensor_tf.child_frame_id = "os_sensor_tmp";
+            map_to_sensor_msg.header.stamp = msg.header.stamp;
+            map_to_sensor_msg.header.frame_id = global_frame_;
+            map_to_sensor_msg.child_frame_id = sensor_frame_;
 
-            map_sensor_tf.transform.translation.x = pred_msg->value_(0, 3);
-            map_sensor_tf.transform.translation.y = pred_msg->value_(1, 3);
-            map_sensor_tf.transform.translation.z = pred_msg->value_(2, 3);
+            map_to_sensor_msg.transform.translation.x = pred_msg->value_(0, 3);
+            map_to_sensor_msg.transform.translation.y = pred_msg->value_(1, 3);
+            map_to_sensor_msg.transform.translation.z = pred_msg->value_(2, 3);
 
             tf2::Quaternion q;
             tf2::Matrix3x3(pred_msg->value_(0, 0),
@@ -222,14 +256,28 @@ void ArtslamLocalizer::odom_callback(const nav_msgs::msg::Odometry &msg) {
                            pred_msg->value_(2, 1),
                            pred_msg->value_(2, 2)).getRotation(q);
 
-            tf2::convert(q, map_sensor_tf.transform.rotation);
+            tf2::convert(q, map_to_sensor_msg.transform.rotation);
+
+            check_sensor_transform();
+
+            // compute the dynamic map->base_link transform
+            tf2::Transform map_to_sensor_tf;
+            tf2::fromMsg(map_to_sensor_msg.transform, map_to_sensor_tf);
+            tf2::Transform map_to_base_tf = map_to_sensor_tf * sensor_to_base_tf_;
+
+            // broadcast the dynamic map->base_link transform
+            geometry_msgs::msg::TransformStamped map_to_base_msg;
+            map_to_base_msg.header.stamp = msg.header.stamp;
+            map_to_base_msg.header.frame_id = global_frame_;
+            map_to_base_msg.child_frame_id = base_frame_;
+            map_to_base_msg.transform = tf2::toMsg(map_to_base_tf);
 
             std::lock_guard<std::mutex> lock(saving_mutex_);
-            tf_broadcaster_->sendTransform(map_sensor_tf);
+            tf_broadcaster_->sendTransform(map_to_base_msg);
 
             // Only for visualization
-            predicted_x_ = pred_msg->value_(0, 3);
-            predicted_y_ = pred_msg->value_(1, 3);
+            predicted_x_ = map_to_base_msg.transform.translation.x;
+            predicted_y_ = map_to_base_msg.transform.translation.y;
         }
     }
 }
@@ -272,15 +320,15 @@ void ArtslamLocalizer::gnss_callback(const sensor_msgs::msg::NavSatFix &msg) {
     if(!use_encoders_ && !use_imu_) {
         if (pred_msg) {
             // Send a tf to represent the motion of the robot
-            geometry_msgs::msg::TransformStamped map_sensor_tf;
+            geometry_msgs::msg::TransformStamped map_to_sensor_msg;
 
-            map_sensor_tf.header.stamp = msg.header.stamp;
-            map_sensor_tf.header.frame_id = global_frame_;
-            map_sensor_tf.child_frame_id = "os_sensor_tmp";
+            map_to_sensor_msg.header.stamp = msg.header.stamp;
+            map_to_sensor_msg.header.frame_id = global_frame_;
+            map_to_sensor_msg.child_frame_id = sensor_frame_;
 
-            map_sensor_tf.transform.translation.x = pred_msg->value_(0, 3);
-            map_sensor_tf.transform.translation.y = pred_msg->value_(1, 3);
-            map_sensor_tf.transform.translation.z = pred_msg->value_(2, 3);
+            map_to_sensor_msg.transform.translation.x = pred_msg->value_(0, 3);
+            map_to_sensor_msg.transform.translation.y = pred_msg->value_(1, 3);
+            map_to_sensor_msg.transform.translation.z = pred_msg->value_(2, 3);
 
             tf2::Quaternion q;
             tf2::Matrix3x3(pred_msg->value_(0, 0),
@@ -293,14 +341,28 @@ void ArtslamLocalizer::gnss_callback(const sensor_msgs::msg::NavSatFix &msg) {
                            pred_msg->value_(2, 1),
                            pred_msg->value_(2, 2)).getRotation(q);
 
-            tf2::convert(q, map_sensor_tf.transform.rotation);
+            tf2::convert(q, map_to_sensor_msg.transform.rotation);
+
+            check_sensor_transform();
+
+            // compute the dynamic map->base_link transform
+            tf2::Transform map_to_sensor_tf;
+            tf2::fromMsg(map_to_sensor_msg.transform, map_to_sensor_tf);
+            tf2::Transform map_to_base_tf = map_to_sensor_tf * sensor_to_base_tf_;
+
+            // broadcast the dynamic map->base_link transform
+            geometry_msgs::msg::TransformStamped map_to_base_msg;
+            map_to_base_msg.header.stamp = msg.header.stamp;
+            map_to_base_msg.header.frame_id = global_frame_;
+            map_to_base_msg.child_frame_id = base_frame_;
+            map_to_base_msg.transform = tf2::toMsg(map_to_base_tf);
 
             std::lock_guard<std::mutex> lock(saving_mutex_);
-            tf_broadcaster_->sendTransform(map_sensor_tf);
+            tf_broadcaster_->sendTransform(map_to_base_msg);
 
             // Only for visualization
-            predicted_x_ = pred_msg->value_(0, 3);
-            predicted_y_ = pred_msg->value_(1, 3);
+            predicted_x_ = map_to_base_msg.transform.translation.x;
+            predicted_y_ = map_to_base_msg.transform.translation.y;
         }
     }
 }
@@ -325,15 +387,15 @@ void ArtslamLocalizer::pointcloud_callback(const sensor_msgs::msg::PointCloud2& 
     lots::core::types::Odometry_MSG::Ptr pred_msg = localizer_.correct_with_cloud(cloud);
 
     if (pred_msg) {
-        geometry_msgs::msg::TransformStamped map_sensor_tf;
+        geometry_msgs::msg::TransformStamped map_to_sensor_msg;
 
-        map_sensor_tf.header.stamp = msg.header.stamp;
-        map_sensor_tf.header.frame_id = global_frame_;
-        map_sensor_tf.child_frame_id = "os_sensor_tmp"; // TODO use sensor_frame_ (parameter) instead
+        map_to_sensor_msg.header.stamp = msg.header.stamp;
+        map_to_sensor_msg.header.frame_id = global_frame_;
+        map_to_sensor_msg.child_frame_id = sensor_frame_; // TODO use sensor_frame_ (parameter) instead
 
-        map_sensor_tf.transform.translation.x = pred_msg->value_(0, 3);
-        map_sensor_tf.transform.translation.y = pred_msg->value_(1, 3);
-        map_sensor_tf.transform.translation.z = pred_msg->value_(2, 3);
+        map_to_sensor_msg.transform.translation.x = pred_msg->value_(0, 3);
+        map_to_sensor_msg.transform.translation.y = pred_msg->value_(1, 3);
+        map_to_sensor_msg.transform.translation.z = pred_msg->value_(2, 3);
 
         tf2::Quaternion q;
         tf2::Matrix3x3(pred_msg->value_(0, 0),
@@ -345,14 +407,35 @@ void ArtslamLocalizer::pointcloud_callback(const sensor_msgs::msg::PointCloud2& 
                        pred_msg->value_(2, 0),
                        pred_msg->value_(2, 1),
                        pred_msg->value_(2, 2)).getRotation(q);
-        tf2::convert(q, map_sensor_tf.transform.rotation);
+
+        tf2::convert(q, map_to_sensor_msg.transform.rotation);
+
+        sensor_msgs::msg::PointCloud2 transformed_cloud;
+        tf2::doTransform(msg, transformed_cloud, map_to_sensor_msg);
+
+        // Publish the transformed point cloud
+        scan_pub_->publish(transformed_cloud);
+
+        check_sensor_transform();
+
+        // compute the dynamic map->base_link transform
+        tf2::Transform map_to_sensor_tf;
+        tf2::fromMsg(map_to_sensor_msg.transform, map_to_sensor_tf);
+        tf2::Transform map_to_base_tf = map_to_sensor_tf * sensor_to_base_tf_;
+
+        // broadcast the dynamic map->base_link transform
+        geometry_msgs::msg::TransformStamped map_to_base_msg;
+        map_to_base_msg.header.stamp = msg.header.stamp;
+        map_to_base_msg.header.frame_id = global_frame_;
+        map_to_base_msg.child_frame_id = base_frame_;
+        map_to_base_msg.transform = tf2::toMsg(map_to_base_tf);
 
         std::lock_guard<std::mutex> lock(saving_mutex_);
-        tf_broadcaster_->sendTransform(map_sensor_tf);
+        tf_broadcaster_->sendTransform(map_to_base_msg);
 
         // Only for visualization
-        corrected_x_ = map_sensor_tf.transform.translation.x;
-        corrected_y_ = map_sensor_tf.transform.translation.y;
+        predicted_x_ = map_to_base_msg.transform.translation.x;
+        predicted_y_ = map_to_base_msg.transform.translation.y;
     }
 
     auto stop = std::chrono::high_resolution_clock::now();
