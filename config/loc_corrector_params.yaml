@@ -1,6 +1,8 @@
 loc_fitness_threshold: 50.0
 loc_mode: 3
 loc_s2m_threshold: 20
+max_delta_trans: 2.0
+max_delta_angle: 1.0
 lt_num_threads: 0
 lt_epsilon: 1e-1
 lt_iterations: 64
