@@ -18,10 +18,10 @@ using namespace std::chrono_literals;
 //const std::string graph_location = "/home/matteo/Datasets/Carmagnola_181023/results_01/graph_mulran.g2o";
 //const std::string clouds_location = "/home/matteo/Datasets/Carmagnola_181023/results_01/keyframes/";
 
-const std::string graph_location = "/home/matteo/risultati/graph_mulran.g2o";
-const std::string clouds_location = "/home/matteo/risultati/keyframes/";
-const std::string gnss_location = "/home/matteo/risultati/gps.txt";
-const std::string params_location = "/home/matteo/ros2_ws/src/localizer_wrapper/config/loc_corrector_params.yaml";
+const std::string graph_location = "/home/airlab/clean_LOTS/results/graph_mulran.g2o";
+const std::string clouds_location = "/home/airlab/clean_LOTS/results/keyframes/";
+const std::string gnss_location = "/home/airlab/clean_LOTS/results/gps.txt";
+const std::string params_location = "/home/airlab/clean_LOTS/src/Localizer-wrapper/config/loc_corrector_params.yaml";
 
 
 ArtslamLocalizer::ArtslamLocalizer()
