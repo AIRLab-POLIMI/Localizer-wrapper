@@ -27,7 +27,7 @@ find_library(LOTS_CORE_UTILS_LIBS REQUIRED
 
 find_library(LOTS_LOCALIZER_LIBS REQUIRED
     NAMES localization_lib
-    HINTS "${PROJECT_SOURCE_DIR}/../../LOTS-LOCALIZATION/lib"
+    HINTS "${PROJECT_SOURCE_DIR}/../../LOTS-Localization/lib"
 )
 
 find_package(G2O REQUIRED)
@@ -47,7 +47,7 @@ include_directories(${GTSAM_INCLUDE_DIR})
 
 include_directories(${PROJECT_SOURCE_DIR}/../../LOTS-CORE/include
                     ${PROJECT_SOURCE_DIR}/../../LOTS-CORE/src
-                    ${PROJECT_SOURCE_DIR}/../../LOTS-LOCALIZATION/
+                    ${PROJECT_SOURCE_DIR}/../../LOTS-Localization/
                     )
 
 find_package(sensor_msgs REQUIRED)

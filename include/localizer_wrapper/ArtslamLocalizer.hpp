@@ -34,6 +34,7 @@ private:
     bool use_encoders_ = false;
     bool use_gnss_ = false;
     bool use_point_clouds_ = false;
+    bool base_tf_ready_ = false;
 
     uint imu_msg_seq_;
     uint pointcloud_msg_seq_;
@@ -44,6 +45,7 @@ private:
 
     Odometry_MSG::Ptr first_odom = nullptr;
 
+    tf2::Transform sensor_to_base_tf_;
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
@@ -52,6 +54,8 @@ private:
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_p_pub_;
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_c_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr scan_pub_;
+
     
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -64,6 +68,7 @@ private:
     void gnss_callback(const sensor_msgs::msg::NavSatFix& msg);
     void odom_timer_callback();
     void state_timer_callback();
+    void check_sensor_transform();
 
 };
 
